@@ -1,9 +1,11 @@
-emqx_gateway
-=====
+# emqx_gateway
 
 An OTP application
 
-Build
------
+## Build
 
-    $ rebar3 compile
+
+## Concept
+
+    Gateway
+    Gateway-Instance
