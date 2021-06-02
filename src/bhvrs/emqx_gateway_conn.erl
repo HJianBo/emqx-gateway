@@ -14,34 +14,9 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(emqx_gateway).
+%% @doc The behavior abstrat for TCP based gateway conn
+%%
+-module(emqx_gateway_conn).
 
--export([ start_gateways/1
-        ]).
+%% TODO: Gateway v0.2
 
-%% APIs
--export([ types/0
-        , create/3
-        , start/2
-        , stop/2
-        , delete/2
-        , list/0
-        ]).
-
-types() ->
-    emqx_gateway_registry:types().
-
-list() ->
-    [].
-
-create(Id, Type, Name, Descr, RawConf) ->
-    emqx_gateway_registry:create(Id, Type, Name, Descr, RawConf).
-
-start(Id, Type) ->
-    emqx_gateway_registry:start(Id, Type).
-
-stop(Id, Type) ->
-    emqx_gateway_registry:stop(Id, Type).
-
-remove(Id, Type) ->
-    emqx_gateway_registry:remove(Id, Type).

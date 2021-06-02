@@ -14,34 +14,23 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(emqx_gateway).
+-module(emqx_gateway_impl).
 
--export([ start_gateways/1
-        ]).
+-include("include/emqx_gateway.hrl").
 
-%% APIs
--export([ types/0
-        , create/3
-        , start/2
-        , stop/2
-        , delete/2
-        , list/0
-        ]).
+%% @doc
+-callback init(Options :: list()) -> {error, any()} | {ok, GwState :: any()}.
 
-types() ->
-    emqx_gateway_registry:types().
+%% @doc
+-callback on_insta_create(Id :: atom(), Insta :: instance(), GwState)
+    -> {ok, GwInstaPid :: pid(), GwInstaState :: any()}
+     %% TODO: v0.2:
+     | {ok, Childspec :: supervisor:child_spec(), GwInstaState :: any()}.
 
-list() ->
-    [].
+%% @doc
+%% TODO: How to update it?
+-callback on_insta_update(Id, NewInsta, OldInsta, GwInstaState, GwState) -> ok.
 
-create(Id, Type, Name, Descr, RawConf) ->
-    emqx_gateway_registry:create(Id, Type, Name, Descr, RawConf).
+%% @doc
+-callback on_insta_destroy(Id, Insta, GwInstaState, GwState) -> ok.
 
-start(Id, Type) ->
-    emqx_gateway_registry:start(Id, Type).
-
-stop(Id, Type) ->
-    emqx_gateway_registry:stop(Id, Type).
-
-remove(Id, Type) ->
-    emqx_gateway_registry:remove(Id, Type).

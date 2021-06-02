@@ -16,19 +16,9 @@
 
 -module(emqx_gateway_registry).
 
+-include("include/emqx_gateway.hrl").
+
 -behavior(gen_server)
-
-%% @doc
--callback init(Options :: list()) -> {error, any()} | {ok, GwState :: any()}.
-
-%% @doc
--callback on_insta_create() -> {ok, GwInstaPid :: pid(), GwInstaState :: any()}.
-
-%% @doc
--callback on_insta_update() -> ok.
-
-%% @doc
--callback on_insta_destory() -> ok.
 
 %% APIs for Impl.
 -export([ load/2
@@ -75,20 +65,30 @@ start_link() ->
 
 %% Types
 
--type descriptor() :: #{ cbmod :: atom()  %% Calback module
-                       , state :: any()
+-type registry_options() :: list().
+
+-type gateway_options() :: list().
+
+-type descriptor() :: #{ cbmod  := atom()
+                       , rgopts := registry_options(),
+                       , gwopts := gateway_options(),
+                       , state => any()
                        , atom() :: any()
-                       }. %% TODO:
+                       }.
 
--spec load(AppName :: atom(), descriptor()) -> ok | {error, any()}.
+-spec load(RegMod:: atom(), registry_options(), list()) -> ok | {error, any()}.
 
-load(AppName, Dscrptr) ->
-    call({load, AppName, Dscrptr}).
+load(RegMod, RgOpts, GwOpts) ->
+    Dscrptr = #{ cbmod  => RegMod
+               , rgopts => RgOpts
+               , gwopts => GwOpts
+               }
+    call({load, RegMod, Dscrptr}).
 
--spec unload(AppName :: atom(), schema()) -> ok | {error, any()}.
+-spec unload(RegMod :: atom()) -> ok | {error, any()}.
 
-unload(AppName) ->
-    all({unload, AppName}).
+unload(RegMod) ->
+    all({unload, RegMod}).
 
 %% @doc Return all registered protocol gateway implementation
 -spec types() -> [atom()].
@@ -99,28 +99,29 @@ call(Req) ->
     gen_server:call(?MODULE, Req, 5000).
 
 %% Instances
-
--record(instance, {
-          id   :: atom(),
-          name :: string(),
-          type :: atom(),
-          order :: non_neg_integer(),
-          descr :: string() | undefined,
-          rawconf :: maps() = #{},
-          enable = true
-         }).
-
--type instance() :: #instance{}.
-
 -spec list() -> [instance()].
 
--spec new(instance()) -> {ok, TopSupPid :: pid()}.
+-spec create(Id, Type, Name, Descr, RawConf) -> {ok, pid()} | {errpr, any()}.
+create(Id, Type, Name, Descr, RawConf) ->
+    create(#instance{id = Id,
+                  type = Type,
+                  name = Name,
+                  descr = Descr,
+                  rawconf = RawConf
+                 }).
 
--spec start(Id) -> ok | {error, any()}.
+-spec create(instance()) -> {ok, pid()} | {error, any()}.
+create(Insta) ->
+    call({create, Insta}).
 
--spec stop(Id) -> ok | {error, any()}.
+-spec remove(Id, Type) -> ok | {error, any()}.
+remove(Id, Type) ->
+    call({remove, Id, Type}).
 
--spec remove(Id) -> ok | {error, any()}.
+-spec start(Id, Type) -> {ok, pid()} | {error, any()}.
+
+-spec stop(Id, Type) -> ok | {error, any()}.
+
 
 %%--------------------------------------------------------------------
 %% gen_server callbacks
@@ -133,37 +134,48 @@ init([]) ->
 
     {ok, #state{}}.
 
-handle_call({load, AppName, Dscrptr}, _From, State = #state{types = Types}}) ->
-    case maps:get(AppName, Types, notfound) of
+handle_call({load, RegMod, Dscrptr}, _From, State = #state{types = Types}}) ->
+    case maps:get(RegMod, Types, notfound) of
         notfound ->
-            {reply, ok, State#state{types = maps:put(AppName, Dscrptr, Types)}};
+            try
+                GwOpts = maps:get(gwopts, Dscrptr),
+                {ok, GwState} = RegMod:init(GwOpts),
+                NDscrptr = maps:put(state, GwState, Dscrptr),
+                NTypes = maps:put(RegMod, NDscrptr, Types),
+                {reply, ok, State#state{types = NTypes}}
+            catch
+                error : {badmatch, {error, Reason}} ->
+                    {reply, {error, Reason}, State};
+                Class : Reason ->
+                    {reply, {error, {Class, Reason}}, State}
+            end
         _ ->
             {reply, {error, already_existed}, State}.
     end;
 
-handle_call({unload, AppName}, _From,
+handle_call({unload, RegMod}, _From,
             State = #state{types = Types,
                            running = Running,
                            stopped = Stopped}) ->
-    RemoveF = fun _rmf(Insta = #instance{type = AppName}) ->
+    RemoveF = fun _rmf(Insta = #instance{type = RegMod}) ->
                     stop_and_delete_instance(Insta),
                     false;
                   _rmf(_) ->
                     true
               end,
-    NTypes = maps:remove(AppName, Types),
+    NTypes = maps:remove(RegMod, Types),
     NRunning = lists:filter(RemoveF, Running),
     NStopped = lists:filter(RemoveF, Stopped),
     {reply, ok, State#state{types = NTypes,
                             running = NRunning,
                             stopped = NStopped}};
 
-handle_call({new, Insta}, _From,
+handle_call({create, Insta}, _From,
             State = #state{types = Types, running = Running}) ->
     case maps:get(Insta#instance.type, Types, notfound) of
         notfound ->
             {reply, {error, not_found}, State};
-        _Dscrptr = #{cbmod := CbMod} ->
+        _Dscrptr = #{cbmod := CbMod, state := GwState} ->
             case get_insta_status(Insta#instance.id, State) of
                 notfound ->
                     try
@@ -171,7 +183,9 @@ handle_call({new, Insta}, _From,
                         {ok, InstaPid, InstaSt} =
                             CbMod:on_insta_create(
                               Insta#instance.id,
-                              Insta#instance.rawconf),
+                              Insta,
+                              GwState
+                             ),
                         NState = State#state{running = [Insta|Running]},
                         %% Link it
                         true = link(InstaPid),
@@ -220,7 +234,7 @@ handle_call({stop, InstaId}, _From, State) ->
             {reply, ok, State}
     end;
 
-handle_call({remove, InstaId}, _From, State) ->
+handle_call({remove, InstaId, Type}, _From, State) ->
     %% Delete it
     {reply, ok, State};
 

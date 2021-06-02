@@ -16,7 +16,9 @@
 
 -module(emqx_stomp_impl).
 
--behavior(emqx_gateway_registry).
+-include_lib("emqx_gateway/include/emqx_gateway.hrl").
+
+-behavior(emqx_gateway_impl).
 
 %% APIs
 -export([ load/0
@@ -49,24 +51,30 @@ load() ->
     %%  Schema        => APIs's Validator
     %%
     SchemaF = fun emqx_stomp_schema:consult/1,
-    emqx_gateway_registry:load(emqx_stomp, SchemaF).
+    RegistryOptions = [{schema, emqx_stomp_schema}],
+
+    YourOptions = [param1, param2],
+    emqx_gateway_registry:load(?MODULE, RegistryOptions, YourOptions).
 
 unload() ->
-    emqx_gateway_registry:unload(emqx_stomp).
+    emqx_gateway_registry:unload(?MODULE).
+
+init([param1, param2]) ->
+    GwState = #{},
+    {ok, GwState}.
 
 %%--------------------------------------------------------------------
 %% emqx_gateway_registry callbacks
 %%--------------------------------------------------------------------
 
-on_insta_create(Name, Options, TopState) ->
-    %% XXX:
+on_insta_create(Id, Instace, GwState) ->
     {ok, GwInstPid} = emqx_stomp_sup:create(Name, Options),
-    {ok, GwInstPid, GwState}.
+    {ok, GwInstPid, GwInstaState}.
 
-on_insta_update(Name, NOptions, OldOptions, GwState, TopState) ->
+on_insta_update(Id, NewInsta, OldInstace, GwInstaState, GwState) ->
     %% XXX:
     ok.
 
-on_insta_destory(Name, Options, GwState, TopState) ->
+on_insta_destroy(Id, Insta, GwInstaState, GwState) ->
     %% XXX:
-    emqx_stomp_sup:delete(Name).
+    emqx_stomp_sup:delete(Id).

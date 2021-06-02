@@ -14,34 +14,19 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(emqx_gateway).
+-ifndef(EMQX_GATEWAY_HRL).
+-define(EMQX_GATEWAY_HRL, 1).
 
--export([ start_gateways/1
-        ]).
+%% @doc The Gateway Instace defination
+-record(instance, { id    :: atom()
+                  , type  :: atom()
+                  , order :: non_neg_integer()  %% ??
+                  , name :: string()
+                  , descr :: string() | undefined
+                  , rawconf :: maps() = #{}
+                  , enable = true
+                  }).
 
-%% APIs
--export([ types/0
-        , create/3
-        , start/2
-        , stop/2
-        , delete/2
-        , list/0
-        ]).
+-type instance() :: #instance{}.
 
-types() ->
-    emqx_gateway_registry:types().
-
-list() ->
-    [].
-
-create(Id, Type, Name, Descr, RawConf) ->
-    emqx_gateway_registry:create(Id, Type, Name, Descr, RawConf).
-
-start(Id, Type) ->
-    emqx_gateway_registry:start(Id, Type).
-
-stop(Id, Type) ->
-    emqx_gateway_registry:stop(Id, Type).
-
-remove(Id, Type) ->
-    emqx_gateway_registry:remove(Id, Type).
+-endif.
