@@ -18,19 +18,30 @@
 
 -include("include/emqx_gateway.hrl").
 
+-type state() :: maps().
+-type reason() :: any().
+
 %% @doc
--callback init(Options :: list()) -> {error, any()} | {ok, GwState :: any()}.
+-callback init(Options :: list()) -> {error, reason()} | {ok, GwState :: state()}.
 
 %% @doc
 -callback on_insta_create(Id :: atom(), Insta :: instance(), GwState)
-    -> {ok, GwInstaPid :: pid(), GwInstaState :: any()}
-     %% TODO: v0.2:
-     | {ok, Childspec :: supervisor:child_spec(), GwInstaState :: any()}.
+    -> {ok, GwInstaPid :: pid(), GwInstaState :: state()}
+     | {ok, Childspec :: supervisor:child_spec(), GwInstaState :: state()}.
 
 %% @doc
-%% TODO: How to update it?
--callback on_insta_update(Id, NewInsta, OldInsta, GwInstaState, GwState) -> ok.
+-callback on_insta_update(Id :: atom(),
+                          NewInsta :: instance(),
+                          OldInsta :: instance(),
+                          GwInstaState :: state(),
+                          GwState :: state())
+    -> ok
+     | {ok, GwInstaPid :: pid(), GwInstaState :: state()}
+     | {ok, Childspec :: supervisor:child_spec(), GwInstaState :: state()}
+     | {error, reason()}.
 
 %% @doc
--callback on_insta_destroy(Id, Insta, GwInstaState, GwState) -> ok.
-
+-callback on_insta_destroy(Id :: atom(),
+                           Insta :: instance(),
+                           GwInstaState :: state(),
+                           GwState :: state()) -> ok.

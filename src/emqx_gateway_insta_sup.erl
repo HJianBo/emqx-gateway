@@ -32,7 +32,7 @@
 -behaviour(gen_server).
 
 %% APIs
--export([start_link/0]).
+-export([start_link/1]).
 
 %% gen_server callbacks
 -export([ init/1
@@ -49,14 +49,14 @@
 %% APIs
 %%--------------------------------------------------------------------
 
-start_link() ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+start_link(Insta) ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [Insta], []).
 
 %%--------------------------------------------------------------------
 %% gen_server callbacks
 %%--------------------------------------------------------------------
 
-init([]) ->
+init([Insta]) ->
 
     %% Input:
     %%  - CM Processer

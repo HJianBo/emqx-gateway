@@ -29,4 +29,20 @@
 
 -type instance() :: #instance{}.
 
+%% @doc The instance running context
+-type insta_context() ::
+        #{
+          %% metrics
+          %% authenticators?
+          %% clientinfo_override
+          %% 
+          %% hooks   ?
+          %% pubsub  ? acl ?
+         }.
+
+%% @doc
+% FIXME:
+%-type clientinfo definations?
+%-type conninfo definations?
+
 -endif.

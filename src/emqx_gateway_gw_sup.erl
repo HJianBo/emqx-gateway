@@ -23,32 +23,61 @@
 
 -behaviour(supervisor).
 
-%% API
 -export([start_link/1]).
+
+-export([ create_insta/2
+        , remove_insta/2
+        , update_insta/2
+        , list_insta/1
+        ]).
 
 %% Supervisor callbacks
 -export([init/1]).
 
--define(CHILD(Type, Mod), ?CHILD(Type, Mod, [])).
-
--define(CHILD(Type, Mod, Args),
-        #{ id => Mod
-         , start => {Mod, start_link, Args}
-         , type => Type
-         }).
+%%--------------------------------------------------------------------
+%% APIs
+%%--------------------------------------------------------------------
 
 start_link([GatewayId]) ->
     supervisor:start_link({local, GatewayId}, ?MODULE, []).
 
+-spec create_insta(pid(), instance()) -> {ok, GwInstaPid :: pid()} | {error, any()}.
+create_insta(Sup, Insta#{id => InstaId}) ->
+    case emqx_gateway_utils:find_sup_child(Sup, InstaId) of
+        {ok, _Pid} -> {error, alredy_existed};
+        false ->
+            %% XXX: More instances options to it?
+            ChildSpec = emqx_gateway_utils:childspec(
+                          worker,
+                          emqx_gateway_insta_sup,
+                          [Insta]
+                         ),
+            emqx_gateway_utils:supervisor_ret(
+              supervisor:start_child(Sup, ChildSpec)
+             )
+    end.
+
+-spec remove_insta(pid(), InstaId :: atom()) -> ok | {error, any()}.
+remove_insta(Sup, InstaId) ->
+    case emqx_gateway_utils:find_sup_child(Sup, InstaId) of
+        false -> ok;
+        {ok, _Pid} ->
+            ok = supervisor:terminate_child(Sup, InstaId),
+            ok = supervisor:delete_child(Sup, InstaId)
+    end.
+
+%% Supervisor callback
+
+%% @doc Initialize Top Supervisor for a Protocol
+%%
+%%
 init([]) ->
-    %% 1. Start cm/registy
-    %% 2. Regsity metrics/statstic
-    %% 3. 
     SupFlags = #{ strategy => one_for_one
                 , intensity => 10
                 , period => 60
                 },
-    ChildSpecs = [ ?CHILD(woker, emqx_gateway_cm)
-                 , ?CHILD(worker, emqx_gateway_registy)
+    ChildSpecs = [ emqx_gateway_utils:childspec(woker, emqx_gateway_cm)
+                 , emqx_gateway_utils:childspec(worker, emqx_gateway_registy) %% FIXME:
+                 , emqx_gateway_registy:childspec(worker, emqx_gateway_insta_sup)
                  ],
     {ok, {SupFlags, ChildSpecs}}.
