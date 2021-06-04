@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2017-2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -39,7 +39,7 @@
 %%--------------------------------------------------------------------
 
 start_link([GatewayId]) ->
-    supervisor:start_link({local, GatewayId}, ?MODULE, []).
+    supervisor:start_link({local, GatewayId}, ?MODULE, [GatewayId]).
 
 -spec create_insta(pid(), instance()) -> {ok, GwInstaPid :: pid()} | {error, any()}.
 create_insta(Sup, Insta#instance{id => InstaId}) ->
@@ -106,15 +106,16 @@ list_insta(Sup) ->
 %% @doc Initialize Top Supervisor for a Protocol
 %%
 %%
-init([]) ->
+init([GatewayId]) ->
     SupFlags = #{ strategy => one_for_one
                 , intensity => 10
                 , period => 60
                 },
-    ChildSpecs = [ emqx_gateway_utils:childspec(woker, emqx_gateway_cm)
-                 %, emqx_gateway_utils:childspec(worker, emqx_gateway_registy) %% FIXME:
-                 ],
-    {ok, {SupFlags, ChildSpecs}}.
+    CmOpts = [{gwid, GatewayId}],
+    CM = emqx_gateway_utils:childspec(woker, emqx_gateway_cm, [CmOpts]),
+
+    %emqx_gateway_utils:childspec(worker, emqx_gateway_registy) %% FIXME:
+    {ok, {SupFlags, [CM]}}.
 
 %%--------------------------------------------------------------------
 %% Internal funcs

@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2017-2021 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2021 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -94,6 +94,37 @@ set_chann_info(_Ctx = #{cm := CM}, ClientId, Info) ->
 -spec set_chann_stats(Ctx, ClientId, Stats) -> boolean().
 set_chann_stats(_Ctx = #{cm := CM}, ClientId, Stats) ->
     emqx_gateway_cm:set_chann_stats(CM, ClientId, Stats).
+
+%% TODO.
+-spec publish(Msg, ClientInfo) -> ok.
+%% 1. ACL Checking
+%% 2. Pub Limit, Quota chekcing
+%% 3. Fire hooks ( message.publish, message.dropped )?
+%% 4.
+
+-spec subscribe() -> ok.
+%% 1. ACL Checking
+%% 2. Sub Limit, Quota checking
+%% 3. Fire hooks ( client.subscribe, session.subscribed )
+%% 4.
+
+%% Client Management Infos
+%%
+%% 0. Handle Deliverys
+%%      - Msg Queue
+%%      - Delivery Strategy
+%%      - Inflight
+%%
+%% 是否可以考虑实现一个 emqx_gateway_protocol:handle_info/1 的方法:
+%% 1. 用于封装这些 API 的处理
+%%
+%%
+%% 1. API Management
+%%      - Establish subscription
+%%      - Kickout
+%%
+%% 2. Ratelimit
+%%
 
 %%--------------------------------------------------------------------
 %% Internal funcs
