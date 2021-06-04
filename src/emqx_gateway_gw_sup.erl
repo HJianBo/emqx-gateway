@@ -15,19 +15,19 @@
 %%--------------------------------------------------------------------
 
 %% @doc The Gateway Top supervisor.
-%%
-%%       ( 是不是也支持把这个Gateway-Top-Sup 直接丢给插件去实现，例如:
-%%          RegOpts = [{supervisor, SupSpec}]. ??? 有啥好处 ???
-%%
 -module(emqx_gateway_gw_sup).
 
 -behaviour(supervisor).
+
+-include("include/emqx_gateway.hrl").
 
 -export([start_link/1]).
 
 -export([ create_insta/2
         , remove_insta/2
         , update_insta/2
+        , start_insta/2
+        , stop_insta/2
         , list_insta/1
         ]).
 
@@ -42,15 +42,18 @@ start_link([GatewayId]) ->
     supervisor:start_link({local, GatewayId}, ?MODULE, []).
 
 -spec create_insta(pid(), instance()) -> {ok, GwInstaPid :: pid()} | {error, any()}.
-create_insta(Sup, Insta#{id => InstaId}) ->
+create_insta(Sup, Insta#instance{id => InstaId}) ->
     case emqx_gateway_utils:find_sup_child(Sup, InstaId) of
-        {ok, _Pid} -> {error, alredy_existed};
+        {ok, _GwInstaPid} -> {error, alredy_existed};
         false ->
             %% XXX: More instances options to it?
+            %%
+            Ctx = ctx(Sup),
+            %%
             ChildSpec = emqx_gateway_utils:childspec(
                           worker,
                           emqx_gateway_insta_sup,
-                          [Insta]
+                          [Insta, Ctx]
                          ),
             emqx_gateway_utils:supervisor_ret(
               supervisor:start_child(Sup, ChildSpec)
@@ -61,10 +64,42 @@ create_insta(Sup, Insta#{id => InstaId}) ->
 remove_insta(Sup, InstaId) ->
     case emqx_gateway_utils:find_sup_child(Sup, InstaId) of
         false -> ok;
-        {ok, _Pid} ->
+        {ok, _GwInstaPid} ->
             ok = supervisor:terminate_child(Sup, InstaId),
             ok = supervisor:delete_child(Sup, InstaId)
     end.
+
+-spec update_insta(pid(), NewInsta :: instance()) -> ok | {error, any()}.
+update_insta(Sup, NewInsta = #instance{id = InstaId}) ->
+    case emqx_gateway_utils:find_sup_child(Sup, InstaId) of
+        false -> {error, not_found};
+        {ok, GwInstaPid} ->
+            emqx_gateway_insta_sup:update(GwInstaPid, NewInsta)
+    end.
+
+-spec start_insta(pid(), atom()) -> ok | {error, any()}.
+start_insta(Sup, InstaId) ->
+    case emqx_gateway_utils:find_sup_child(Sup, InstaId) of
+        false -> {error, not_found};
+        {ok, GwInstaPid} ->
+            emqx_gateway_insta_sup:start(GwInstaPid)
+    end.
+
+-spec stop_insta(pid(), atom()) -> ok | {error, any()}.
+stop_insta(Sup, InstaId) ->
+    case emqx_gateway_utils:find_sup_child(Sup, InstaId) of
+        false -> {error, not_found};
+        {ok, GwInstaPid} ->
+            emqx_gateway_insta_sup:stop(GwInstaPid)
+    end.
+
+-spec list_insta(pid()) -> [instance()].
+list_insta(Sup) ->
+    lists:filtermap(
+      fun({InstaId, GwInstaPid, _Type, _Mods}) ->
+        is_gateway_insta_id(InstaId)
+          andalso emqx_gateway_insta_sup:instance(GwInstaPid)
+      end, supervisor:which_children(?MODULE)).
 
 %% Supervisor callback
 
@@ -77,7 +112,19 @@ init([]) ->
                 , period => 60
                 },
     ChildSpecs = [ emqx_gateway_utils:childspec(woker, emqx_gateway_cm)
-                 , emqx_gateway_utils:childspec(worker, emqx_gateway_registy) %% FIXME:
-                 , emqx_gateway_registy:childspec(worker, emqx_gateway_insta_sup)
+                 %, emqx_gateway_utils:childspec(worker, emqx_gateway_registy) %% FIXME:
                  ],
     {ok, {SupFlags, ChildSpecs}}.
+
+%%--------------------------------------------------------------------
+%% Internal funcs
+%%--------------------------------------------------------------------
+
+ctx(Sup) ->
+    CM = emqx_gateway_utils:find_sup_child(Sup, emqx_gateway_cm),
+    #{cm => CM}.
+
+is_gateway_insta_id(emqx_gateway_cm) ->
+    false;
+is_gateway_insta_id(Id) ->
+    true.

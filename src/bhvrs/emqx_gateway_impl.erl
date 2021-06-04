@@ -25,13 +25,12 @@
 -callback init(Options :: list()) -> {error, reason()} | {ok, GwState :: state()}.
 
 %% @doc
--callback on_insta_create(Id :: atom(), Insta :: instance(), GwState)
+-callback on_insta_create(Insta :: instance(), GwState)
     -> {ok, GwInstaPid :: pid(), GwInstaState :: state()}
      | {ok, Childspec :: supervisor:child_spec(), GwInstaState :: state()}.
 
 %% @doc
--callback on_insta_update(Id :: atom(),
-                          NewInsta :: instance(),
+-callback on_insta_update(NewInsta :: instance(),
                           OldInsta :: instance(),
                           GwInstaState :: state(),
                           GwState :: state())
@@ -41,7 +40,6 @@
      | {error, reason()}.
 
 %% @doc
--callback on_insta_destroy(Id :: atom(),
-                           Insta :: instance(),
+-callback on_insta_destroy(Insta :: instance(),
                            GwInstaState :: state(),
                            GwState :: state()) -> ok.

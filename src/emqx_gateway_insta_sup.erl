@@ -15,8 +15,6 @@
 %%--------------------------------------------------------------------
 
 %% @doc The gateway instance management
-%%       - How to create/update/remove/start/stop it
-%%       - Management authenticators
 %%       - ClientInfo Override? Translators ? Mountpoint ??
 %%
 %% Interface:
@@ -56,25 +54,32 @@ start_link(Insta) ->
 %% gen_server callbacks
 %%--------------------------------------------------------------------
 
-init([Insta]) ->
+init([Insta, Ctx0, GwState]) ->
+    #instance{
+       id   = InstaId,
+       type = CbMod,
+       rawconf = RawConf} = Insta,
 
-    %% Input:
-    %%  - CM Processer
-    %%  - Metrics Counter
-    %%  - GatewayInstace
-    %%
+    %% Create authenticators
+    Ctx = case maps:get(authenticator, RawConf, allow_anonymouse) of
+              allow_anonymouse ->
+                  Ctx#{auth => allow_anonymouse};
+              Funcs when is_list(Funcs) ->
+                  ChainId = create_authenticator_for_gateway_insta(Funcs),
+                  Ctx#{auth => ChainId}
+          end,
+    try
+        CbMod:on_insta_create(Insta, Ctx, GwState)
+    catch
+        Class : Reason : Stk ->
+            todo
+    after
+        %% Clean authenticators
+        %% TODO:
+    end,
 
-    %% SideEffict:
-    %%
-    %%  - Call back on_insta_create/3
-    %%  - 
-    %%
-
-    %% 1. Create Auth Chain
     %% 2. ClientInfo Override Fun??
-    %% 3. Callback to create instance
-    %% 2. Metrics
-    %% 3. Registry
+
     {ok, #state{}}.
 
 handle_call(_Request, _From, State) ->
@@ -88,6 +93,9 @@ handle_info(_Info, State) ->
     {noreply, State}.
 
 terminate(_Reason, _State) ->
+    %% Destory ctx
+    %%  1. auth
+    %%  2.
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
@@ -96,3 +104,4 @@ code_change(_OldVsn, State, _Extra) ->
 %%--------------------------------------------------------------------
 %% Internal funcs
 %%--------------------------------------------------------------------
+

@@ -21,24 +21,22 @@
 -record(instance, { id    :: atom()
                   , type  :: atom()
                   , order :: non_neg_integer()  %% ??
-                  , name :: string()
-                  , descr :: string() | undefined
+                  , name :: binary()
+                  , descr :: binary() | undefined
                   , rawconf :: maps() = #{}
-                  , enable = true
+                  , enable = true           %% FIXME: Read from configuration ?
                   }).
 
 -type instance() :: #instance{}.
 
-%% @doc The instance running context
--type insta_context() ::
-        #{
-          %% metrics
-          %% authenticators?
-          %% clientinfo_override
-          %% 
-          %% hooks   ?
-          %% pubsub  ? acl ?
-         }.
+%-type instance_info() ::
+%        #{ id    := atom()
+%         , type  := atom()
+%         , order := non_neg_integer()
+%         , name  := binary()
+%         , descr => binary() | undefined
+%         , status := stopped | running 
+%         }.
 
 %% @doc
 % FIXME:

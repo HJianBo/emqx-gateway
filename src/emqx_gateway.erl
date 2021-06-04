@@ -31,17 +31,45 @@
 types() ->
     emqx_gateway_registry:types().
 
+%%--------------------------------------------------------------------
+%% Gateway Instace APIs
+
+%% FIXME: Map is better ???
+-spec list() -> [instance()].
 list() ->
+    %% TODO:
     [].
 
-create(Id, Type, Name, Descr, RawConf) ->
-    emqx_gateway_registry:create(Id, Type, Name, Descr, RawConf).
+%% XXX: InstaId 是不是可以自己生成(保证全集群唯一)
 
-start(Id, Type) ->
-    emqx_gateway_registry:start(Id, Type).
+-spec create(atom(), atom(), binary(), binary(), map())
+    -> {ok, pid()}
+     | {error, any()}.
+create(InstaId, Type, Name, Descr, RawConf) ->
+    case emqx_gateway_registry:lookup(Type) of
+        undefined -> {error, {unknown_type, Type}};
+        GwState ->
+            Insta = #instance{id = InstaId,
+                              type = Type,
+                              name = Name,
+                              descr = Descr,
+                              rawconf = RawConf
+                             },
+            emqx_gateway_sup:create_gateway_insta(Insta)
+    end.
 
-stop(Id, Type) ->
-    emqx_gateway_registry:stop(Id, Type).
+-spec remove(atom(), atom()) -> ok | {error, any()}.
+remove(InstaId, Type) ->
+    emqx_gateway_sup:remove(InstaId, Type).
 
-remove(Id, Type) ->
-    emqx_gateway_registry:remove(Id, Type).
+-spec update(instance(), atom()) -> ok | {error, any()}.
+update(NewInsta, Type) ->
+    emqx_gateway_sup:update_gateway_insta(NewInsta, Type).
+
+-spec start(atom(), atom()) -> ok | {error, any()}.
+start(InstaId, Type) ->
+    emqx_gateway_sup:start_gateway_insta(InstaId, Type).
+
+-spec stop(atom(), atom()) -> ok | {error, any()}.
+stop(InstaId, Type) ->
+    emqx_gateway_sup:stop_gateway_insta(InstaId, Type).

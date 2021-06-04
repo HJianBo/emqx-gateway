@@ -22,16 +22,21 @@
 
 -export([start_link/0]).
 
+%% Gateway Instance APIs
 -export([ create_gateway_insta/2
         , remove_gateway_insta/2
         , update_gateway_insta/3
+        , start_gateway_insta/2
+        , stop_gateway_insta/2
         , list_gateway_insta/1
         , list_gateway_insta/0
         ]).
 
+%% Gateway APs
 -export([ list_started_gateway/0
         ]).
 
+%% supervisor callbacks
 -export([init/1]).
 
 %%--------------------------------------------------------------------
@@ -64,6 +69,16 @@ update_gateway_insta(NewInsta, Type) ->
         _ -> {error, not_found}
     end.
 
+start_gateway_insta(InstaId, Type) ->
+    ok.
+
+stop_gateway_insta(InstaId, Type) ->
+    case emqx_gateway_utils:find_sup_child(?MODULE, Type) of
+        {ok, GwSup} ->
+            emqx_gateway_gw_sup:stop_insta(GwSup, NewInsta);
+        _ -> {error, not_found}
+    end.
+
 -spec list_gateway_insta(Type :: atom()) -> {ok, [instance()]} | {error, any()}.
 list_gateway_insta(Type) ->
     case emqx_gateway_utils:find_sup_child(?MODULE, Type) of
@@ -72,9 +87,13 @@ list_gateway_insta(Type) ->
         _ -> {error, not_found}
     end.
 
--spec list_gateway_insta() -> [instance()].
+-spec list_gateway_insta() -> [{atom(), instance()}].
 list_gateway_insta() ->
-    todo.
+    list:map(
+      fun(Type) ->
+        {ok, Instas} = list_gateway_insta(Type),
+        {Type, Instas}
+      end, list_started_gateway()).
 
 -spec list_started_gateway() -> [GatewayId :: atom()].
 list_started_gateway() ->
