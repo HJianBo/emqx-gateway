@@ -38,8 +38,8 @@
 %% APIs
 %%--------------------------------------------------------------------
 
-start_link([GatewayId]) ->
-    supervisor:start_link({local, GatewayId}, ?MODULE, [GatewayId]).
+start_link([GwId]) ->
+    supervisor:start_link({local, GwId}, ?MODULE, [GwId]).
 
 -spec create_insta(pid(), instance()) -> {ok, GwInstaPid :: pid()} | {error, any()}.
 create_insta(Sup, Insta#instance{id => InstaId}) ->
@@ -48,7 +48,7 @@ create_insta(Sup, Insta#instance{id => InstaId}) ->
         false ->
             %% XXX: More instances options to it?
             %%
-            Ctx = ctx(Sup),
+            Ctx = ctx(Sup, InstaId),
             %%
             ChildSpec = emqx_gateway_utils:childspec(
                           worker,
@@ -106,12 +106,12 @@ list_insta(Sup) ->
 %% @doc Initialize Top Supervisor for a Protocol
 %%
 %%
-init([GatewayId]) ->
+init([GwId]) ->
     SupFlags = #{ strategy => one_for_one
                 , intensity => 10
                 , period => 60
                 },
-    CmOpts = [{gwid, GatewayId}],
+    CmOpts = [{gwid, GwId}],
     CM = emqx_gateway_utils:childspec(woker, emqx_gateway_cm, [CmOpts]),
 
     %emqx_gateway_utils:childspec(worker, emqx_gateway_registy) %% FIXME:
@@ -121,9 +121,13 @@ init([GatewayId]) ->
 %% Internal funcs
 %%--------------------------------------------------------------------
 
-ctx(Sup) ->
+ctx(Sup, InstaId) ->
+    {_, GwId} = erlang:process_info(Sup, registered_name),
     CM = emqx_gateway_utils:find_sup_child(Sup, emqx_gateway_cm),
-    #{cm => CM}.
+    #{ instid => InstaId
+     , gwid => GwId
+     , cm => CM
+     }.
 
 is_gateway_insta_id(emqx_gateway_cm) ->
     false;

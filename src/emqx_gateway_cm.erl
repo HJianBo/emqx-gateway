@@ -107,7 +107,7 @@ open_session(GwId, true = CleanStart, ClientInfo, ConnInfo, CreateSessionFun) ->
                  end,
     locker_trans(GwId, ClientId, CleanStart);
 
-open_session(Pid, false = CleanStart, ClientInfo, ConnInfo, CreateSessionFun) ->
+open_session(GwId, false = CleanStart, ClientInfo, ConnInfo, CreateSessionFun) ->
     Self = self(),
     {error, not_supported_now}.
 

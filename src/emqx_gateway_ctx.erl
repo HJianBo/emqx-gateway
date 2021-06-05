@@ -19,10 +19,10 @@
 
 %% @doc The instance running context
 -type context() ::
-        #{ iid  := instance_id()
-         , gid  := gateway_id()
-         , auth := allow_anonymouse | emqx_authentication:chain_id()
-         , cm   := pid()
+        #{ instid  := instance_id()
+         , gwid    := gateway_id()
+         , auth    := allow_anonymouse | emqx_authentication:chain_id()
+         , cm      := pid()
          , metrics := metrics()
          %% metrics
          %% authenticators?
@@ -83,22 +83,22 @@ authenticate(_Ctx = #{auth := ChainId}, ClientInfo0) ->
      | {error, any()}.
 
 open_session(Ctx, false, ClientInfo, ConnInfo, CreateSessionFun) ->
-    ?LOG(wanring, "clean_start=false is not supported now, "
-                  "fallback to clean_start mode"),
+    logger:warning("[PGW-Ctx] clean_start=false is not supported now, "
+                   "fallback to clean_start mode"),
     open_session(Ctx, true, ClientInfo, ConnInfo, CreateSessionFun);
 
-open_session(_Ctx = #{cm := CM},
+open_session(_Ctx = #{gwid := GwId},
              CleanStart, ClientInfo, ConnInfo, CreateSessionFun) ->
-    emqx_gateway_cm:open_session(CM, CleanStart,
+    emqx_gateway_cm:open_session(GwId, CleanStart,
                                  ClientInfo, ConnInfo, CreateSessionFun).
 
 -spec set_chann_info(Ctx, ClientId, Info) -> boolean().
-set_chann_info(_Ctx = #{cm := CM}, ClientId, Info) ->
-    emqx_gateway_cm:set_chann_info(CM, ClientId, Info).
+set_chann_info(_Ctx = #{gwid := GwId}, ClientId, Info) ->
+    emqx_gateway_cm:set_chann_info(GwId, ClientId, Info).
 
 -spec set_chann_stats(Ctx, ClientId, Stats) -> boolean().
-set_chann_stats(_Ctx = #{cm := CM}, ClientId, Stats) ->
-    emqx_gateway_cm:set_chann_stats(CM, ClientId, Stats).
+set_chann_stats(_Ctx = #{gwid := GwId}, ClientId, Stats) ->
+    emqx_gateway_cm:set_chann_stats(GwId, ClientId, Stats).
 
 %% TODO.
 -spec publish(Msg, ClientInfo) -> ok.
