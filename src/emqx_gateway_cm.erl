@@ -37,10 +37,13 @@
         ]).
 
 -record(state, {
-          gwid    :: atom(),    %% Gateway Id
-          registry :: pid(),    %% ClientId Registry server
+          gwid      :: atom(),    %% Gateway Id
+          locker    :: pid(),     %% ClientId Locker for CM
+          registry  :: pid(),     %% ClientId Registry server
           chan_pmon :: emqx_pmon:pmon()
          }).
+
+-define(T_TAKEOVER, 15000).
 
 %%--------------------------------------------------------------------
 %% APIs
@@ -48,14 +51,170 @@
 
 %% XXX: Options for cm process
 start_link(Options) ->
-    gen_server:start_link(?MODULE, Options, []).
+    GwId = proplists:get_value(gwid, Options),
+    gen_server:start_link({local, procname(GwId)}, ?MODULE, Options, []).
 
--spec cmtabs(GwId) ->
+procname(GwId) ->
+    list_to_atom(lists:concat([emqx_gateway_, GwId, '_cm'])).
+
+-spec cmtabs(GwId) -> {ChanTab :: atom(),
+                       ConnTab :: atom(),
+                       ChannInfoTab :: atom()}.
 cmtabs(GwId) ->
     { tabname(chan, GwId)   %% Client Tabname; Record: {ClientId, Pid}
     , tabname(conn, GwId)   %% Client ConnMod; Recrod: {{ClientId, Pid}, ConnMod}
     , tabname(info, GwId)   %% ClientInfo Tabname; Record: {{ClientId, Pid}, ClientInfo, ClientStats}
     }.
+
+tabname(chan, GwId) ->
+    list_to_atom(lists:concat([emqx_gateway_, GwId, '_channel']));
+tabname(conn, GwId) ->
+    list_to_atom(lists:concat([emqx_gateway_, GwId, '_channel_conn']));
+tabname(info, GwId) ->
+    list_to_atom(lists:concat([emqx_gateway_, GwId, '_channel_info'])).
+
+lockername(GwId) ->
+    list_to_atom(lists:concat([emqx_gateway_, GwId, '_locker'])).
+
+-spec register_channel(atom(), binary(), pid(), emqx_types:conninfo()) ->
+register_channel(GwId, ClientId, ChanPid, #{conn_mod := ConnMod}) when is_pid(ChanPid) ->
+    Chan = {ClientId, ChanPid},
+    true = ets:insert(tabname(chan, GwId), Chan),
+    true = ets:insert(tabname(conn, GwId), {Chan, ConnMod}),
+    ok = emqx_gateway_cm_registry:register_channel(GwId, Chan),
+    cast(procname(GwId), {registered, Chan}).
+
+%% @doc Unregister a channel.
+-spec unregister_channel(atom(), emqx_types:clientid()) -> ok.
+unregister_channel(GwId, ClientId) when is_binary(ClientId) ->
+    true = do_unregister_channel(GwId, {ClientId, self()}),
+    ok.
+
+-spec open_session(GwId:: atom(), CleanStart, ClientInfo, ConnInfo, CreateSessionFun)
+    -> {ok, #{session := map(),
+              present := boolean(),
+              pendings => list()
+          }}
+     | {error, any()}.
+
+open_session(GwId, true = CleanStart, ClientInfo, ConnInfo, CreateSessionFun) ->
+    Self = self(),
+    CleanStart = fun(_) ->
+                     ok = discard_session(GwId, ClientId),
+                     Session = create_session(GwId, ClientInfo, ConnInfo),
+                     register_channel(GwId, ClientId, Self, ConnInfo),
+                     {ok, #{session => Session, present => false}}
+                 end,
+    locker_trans(GwId, ClientId, CleanStart);
+
+open_session(Pid, false = CleanStart, ClientInfo, ConnInfo, CreateSessionFun) ->
+    Self = self(),
+    {error, not_supported_now}.
+
+%% @private
+create_session(GwId, ClientInfo, ConnInfo, CreateSessionFun) ->
+    try
+        Session = emqx_gateway_util:apply(
+                    CreateSessionFun,
+                    [ClientInfo, ConnInfo]
+                   ),
+        %% TODO: v0.2 session metrics & hooks
+        %ok = emqx_metrics:inc('session.created'),
+        %ok = emqx_hooks:run('session.created', [ClientInfo, emqx_session:info(Session)]),
+        Session
+    catch
+        Class : Reason : Stk ->
+            logger:error("[PGW-CM] Failed to create a session: ~p, ~p "
+                         "Stacktrace:~0p", [Class, Reason, Stk]),
+        throw(Reason)
+    end.
+
+%% @doc Discard all the sessions identified by the ClientId.
+-spec discard_session(GwId :: atom(), binary()) -> ok.
+discard_session(GwId, ClientId) when is_binary(ClientId) ->
+    case lookup_channels(GwId, ClientId) of
+        [] -> ok;
+        ChanPids -> lists:foreach(fun(Pid) -> do_discard_session(GwId, ClientId, Pid) end, ChanPids)
+    end.
+
+%% @private
+do_discard_session(GwId, ClientId, Pid) ->
+    try
+        discard_session(GwId, ClientId, Pid)
+    catch
+        _ : noproc -> % emqx_ws_connection: call
+            ?tp(debug, "session_already_gone", #{pid => Pid}),
+            ok;
+        _ : {noproc, _} -> % emqx_connection: gen_server:call
+            ?tp(debug, "session_already_gone", #{pid => Pid}),
+            ok;
+        _ : {{shutdown, _}, _} ->
+            ?tp(debug, "session_already_shutdown", #{pid => Pid}),
+            ok;
+        _ : Error : St ->
+            ?tp(error, "failed_to_discard_session",
+                #{pid => Pid, reason => Error, stacktrace=>St})
+    end.
+
+%% @private
+discard_session(GwId, ClientId, ChanPid) when node(ChanPid) == node() ->
+    case get_chann_conn_mod(GwId, ClientId, ChanPid) of
+        undefined -> ok;
+        ConnMod when is_atom(ConnMod) ->
+            ConnMod:call(ChanPid, discard, ?T_TAKEOVER)
+    end;
+
+%% @private
+discard_session(GwId, ClientId, ChanPid) ->
+    rpc_call(node(ChanPid), discard_session, [GwId, ClientId, ChanPid]).
+
+%% @doc Lookup channels.
+-spec(lookup_channels(atom(), emqx_types:clientid()) -> list(chan_pid())).
+lookup_channels(GwId, ClientId) ->
+    lookup_channels(GwId, ClientId).
+
+%% @doc Lookup local or global channels.
+-spec(lookup_channels(atom(), emqx_types:clientid()) -> list(chan_pid())).
+lookup_channels(GwId, ClientId) ->
+    emqx_cm_registry:lookup_channels(GwId, ClientId);
+
+get_chann_conn_mod(GwId, ClientId, ChanPid) when node(ChanPid) == node() ->
+    Chan = {ClientId, ChanPid},
+    try [ConnMod] = ets:lookup_element(tabname(conn, GwId), Chan, 2), ConnMod
+    catch
+        error:badarg -> undefined
+    end;
+get_chann_conn_mod(GwId, ClientId, ChanPid) ->
+    rpc_call(node(ChanPid), get_chann_conn_mod, [GwId, ClientId, ChanPid]).
+
+%% Locker
+
+locker_trans(_GwId, undefined, Fun) ->
+    Fun([]);
+locker_trans(GwId, ClientId, Fun) ->
+    Locker = lockername(GwId),
+    case locker_lock(Locker, ClientId) of
+        {true, Nodes} ->
+            try Fun(Nodes) after unlock(Locker, ClientId) end;
+        {false, _Nodes} ->
+            {error, client_id_unavailable}
+    end.
+
+lock(Locker, ClientId) ->
+    ekka_locker:acquire(Locker, ClientId, quorum).
+
+unlock(Locker, ClientId) ->
+    ekka_locker:release(Locker, ClientId, quorum).
+
+%% @private
+rpc_call(Node, Fun, Args) ->
+    case rpc:call(Node, ?MODULE, Fun, Args) of
+        {badrpc, Reason} -> error(Reason);
+        Res -> Res
+    end.
+
+cast(Name, Msg) ->
+    gen_server:cast(Name, Msg).
 
 %%--------------------------------------------------------------------
 %% gen_server callbacks
@@ -74,13 +233,15 @@ init(Options) ->
     %% Start link cm-registry process
     Registry = emqx_gateway_cm_registry:start_link(GwId),
 
+    %% Start locker process
+    {ok, Locker} = ekka_locker:start_link(lockername(GwId)),
+
     %% Interval update stats
     %% TODO: v0.2
     %ok = emqx_stats:update_interval(chan_stats, fun ?MODULE:stats_fun/0),
 
-    {ok, #state{chantab = ChanTab,
-                conntab = ConnTab,
-                infotab = InfoTab,
+    {ok, #state{gwid = GwId,
+                locker = Locker,
                 registry = Registry,
                 chan_pmon = emqx_pmon:new()}}.
 
@@ -104,7 +265,7 @@ handle_info({'DOWN', _MRef, process, Pid, _Reason},
     ok = emqx_pool:async_submit(
            lists:foreach(
              fun({ChanPid, ClientId}) ->
-                 do_unregister_channel({ClientId, ChanPid}, Registry, CmTabs)
+                 do_unregister_channel(GwId, {ClientId, ChanPid}, CmTabs)
              end, Items)
           ),
     {noreply, State#{chan_pmon := PMon1}};
@@ -122,15 +283,8 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal funcs
 %%--------------------------------------------------------------------
 
-tabname(chan, GwId) ->
-    list_to_atom(lists:concat([emqx_gateway_, GwId, '_channel']));
-tabname(conn, GwId) ->
-    list_to_atom(lists:concat([emqx_gateway_, GwId, '_channel_conn']));
-tabname(info, GwId) ->
-    list_to_atom(lists:concat([emqx_gateway_, GwId, '_channel_info'])).
-
-do_unregister_channel(Chan, Registry, {ChanTab, ConnTab, InfoTab}) ->
-    ok = emqx_gateway_cm_registry:unregister_channel(Registry, Chan),
+do_unregister_channel(GwId, Chan, {ChanTab, ConnTab, InfoTab}) ->
+    ok = emqx_gateway_cm_registry:unregister_channel(GwId, Chan),
 
     true = ets:delete(ConnTab, Chan),
     true = ets:delete(InfoTab, Chan),

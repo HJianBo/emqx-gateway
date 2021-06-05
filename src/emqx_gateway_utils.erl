@@ -23,6 +23,9 @@
         , find_sup_child/2
         ]).
 
+-export([ apply/2
+        ]).
+
 -spec childspec(supervisor:worker(), Mod :: atom()) -> supervisor:child_spec().
 child_spec(Type, Mod) ->
     child_spec(Type, Mod, []).
@@ -49,3 +52,16 @@ find_sup_child(SupPid, ChildId) ->
         false -> false;
         {_Id, Pid, _Type, _Mods} -> {ok, Pid}
     end.
+
+apply({M, F, A}, A2) when is_atom(M),
+                          is_atom(M),
+                          is_list(A),
+                          is_list(A2) ->
+    erlang:apply(M, F, A ++ A2);
+apply({F, A}, A2) when is_function(F),
+                       is_list(A),
+                       is_list(A2) ->
+    erlang:apply(F, A ++ A2);
+apply(F, A2) when is_function(F),
+                  is_list(A2) ->
+    erlang:apply(F, A2).

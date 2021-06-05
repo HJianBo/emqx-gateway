@@ -26,11 +26,11 @@
 %% XXX: needless
 %-export([is_enabled/0]).
 
--export([ register_channel/1
+-export([ register_channel/2
         , unregister_channel/1
         ]).
 
--export([lookup_channels/1]).
+-export([lookup_channels/2]).
 
 %% gen_server callbacks
 -export([ init/1
@@ -59,28 +59,25 @@ tabname(GwId) ->
 %%--------------------------------------------------------------------
 
 %% @doc Register a global channel.
--spec(register_channel(emqx_types:clientid()
-                    | {emqx_types:clientid(), pid()}) -> ok).
+-spec register_channel(atom(), binary() | {binary(), pid()}) -> ok.
+register_channel(GwId, ClientId) when is_binary(ClientId) ->
+    register_channel(GwId, {ClientId, self()});
 
--spec register_channel(binary() | {binary(), pid()}, atom()) -> ok.
-register_channel(ClientId, GwId) when is_binary(ClientId) ->
-    register_channel({ClientId, self()}, GwId);
-
-register_channel({ClientId, ChanPid}, GwId) when is_binary(ClientId), is_pid(ChanPid) ->
+register_channel(GwId, {ClientId, ChanPid}) when is_binary(ClientId), is_pid(ChanPid) ->
     mnesia:dirty_write(tabname(GwId), record(ClientId, ChanPid)).
 
 %% @doc Unregister a global channel.
--spec unregister_channel(binary() | {binary(), pid()}, atom()) -> ok.
-unregister_channel(ClientId, GwId) when is_binary(ClientId) ->
-    unregister_channel({ClientId, self()}, GwId);
+-spec unregister_channel(atom(), binary() | {binary(), pid()}) -> ok.
+unregister_channel(GwId, ClientId) when is_binary(ClientId) ->
+    unregister_channel(GwId, {ClientId, self()});
 
-unregister_channel({ClientId, ChanPid}, GwId) when is_binary(ClientId), is_pid(ChanPid) ->
+unregister_channel(GwId, {ClientId, ChanPid}) when is_binary(ClientId), is_pid(ChanPid) ->
     mnesia:dirty_delete_object(tabname(GwId), record(ClientId, ChanPid));
 
 %% @doc Lookup the global channels.
--spec lookup_channels(binary(), atom()) -> list(pid()).
-lookup_channels(ClientId, GwId) ->
-    [ChanPid || #channel{pid = ChanPid} <- mnesia:dirty_read(?TAB, ClientId)].
+-spec lookup_channels(atom(), binary()) -> list(pid()).
+lookup_channels(GwId, ClientId) ->
+    [ChanPid || #channel{pid = ChanPid} <- mnesia:dirty_read(tabname(GwId), ClientId)].
 
 record(ClientId, ChanPid) ->
     #channel{chid = ClientId, pid = ChanPid}.
@@ -103,11 +100,11 @@ init([GwId]) ->
     {ok, #{gwid => GwId}}.
 
 handle_call(Req, _From, State) ->
-    ?LOG(error, "Unexpected call: ~p", [Req]),
+    logger:error("[PGW-CM-Registy] Unexpected call: ~p", [Req]),
     {reply, ignored, State}.
 
 handle_cast(Msg, State) ->
-    ?LOG(error, "Unexpected cast: ~p", [Msg]),
+    logger:error("[PGW-CM-Registy] Unexpected cast: ~p", [Msg]),
     {noreply, State}.
 
 handle_info({membership, {mnesia, down, Node}}, State = #{gwid := GwId}) ->
@@ -122,7 +119,7 @@ handle_info({membership, _Event}, State) ->
     {noreply, State};
 
 handle_info(Info, State) ->
-    ?LOG(error, "Unexpected info: ~p", [Info]),
+    logger:error("[PGW-CM-Registy] Unexpected info: ~p", [Msg]),
     {noreply, State}.
 
 terminate(_Reason, _State) ->
@@ -138,5 +135,5 @@ code_change(_OldVsn, State, _Extra) ->
 cleanup_channels(Node, Tab) ->
     Pat = [{#channel{pid = '$1', _ = '_'}, [{'==', {node, '$1'}, Node}], ['$_']}],
     lists:foreach(fun(Chan) ->
-        mnesia:delete_object(?TAB, Chan, write)
+        mnesia:delete_object(Tab, Chan, write)
     end, mnesia:select(Tab, Pat, write)).

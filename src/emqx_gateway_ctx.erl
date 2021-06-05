@@ -19,7 +19,8 @@
 
 %% @doc The instance running context
 -type context() ::
-        #{ id   := instance_id()
+        #{ iid  := instance_id()
+         , gid  := gateway_id()
          , auth := allow_anonymouse | emqx_authentication:chain_id()
          , cm   := pid()
          , metrics := metrics()
@@ -69,6 +70,10 @@ authenticate(_Ctx = #{auth := ChainId}, ClientInfo0) ->
 %% @doc Register the session to the cluster.
 %%      This function should be called after the client has authenticated
 %%      successfully so that the client can be managed in the cluster.
+%%
+
+%% 如果没有 Session 如何在集群中保持唯一?
+%%  OpenSession ??
 %%
 -spec open_session(Ctx, ClearStart, ClientInfo, ConnInfo, CreateSessionFun)
     -> {ok, #{session := Session,
