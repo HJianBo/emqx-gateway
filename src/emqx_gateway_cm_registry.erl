@@ -19,15 +19,12 @@
 
 -behaviour(gen_server).
 
--include("emqx.hrl").
--include("logger.hrl").
--include("types.hrl").
-
 -logger_header("[Registry]").
 
--export([start_link/0]).
+-export([start_link/1]).
 
--export([is_enabled/0]).
+%% XXX: needless
+%-export([is_enabled/0]).
 
 -export([ register_channel/1
         , unregister_channel/1
@@ -44,53 +41,45 @@
         , code_change/3
         ]).
 
--define(REGISTRY, ?MODULE).
--define(TAB, emqx_channel_registry).
 -define(LOCK, {?MODULE, cleanup_down}).
 
 -record(channel, {chid, pid}).
 
 %% @doc Start the global channel registry.
--spec(start_link() -> startlink_ret()).
-start_link() ->
-    gen_server:start_link({local, ?REGISTRY}, ?MODULE, [], []).
+-spec(start_link(atom()) -> startlink_ret()).
+start_link(GwId) ->
+    gen_server:start_link(?MODULE, [GwId], []).
+
+-spec tabname(atom()) -> atom().
+tabname(GwId) ->
+    list_to_atom(lists:concat([emqx_gateway_, GwId, '_channel_registry'])).
 
 %%--------------------------------------------------------------------
 %% APIs
 %%--------------------------------------------------------------------
 
-%% @doc Is the global registry enabled?
--spec(is_enabled() -> boolean()).
-is_enabled() ->
-    emqx:get_env(enable_session_registry, true).
-
 %% @doc Register a global channel.
 -spec(register_channel(emqx_types:clientid()
                     | {emqx_types:clientid(), pid()}) -> ok).
-register_channel(ClientId) when is_binary(ClientId) ->
-    register_channel({ClientId, self()});
 
-register_channel({ClientId, ChanPid}) when is_binary(ClientId), is_pid(ChanPid) ->
-    case is_enabled() of
-        true -> mnesia:dirty_write(?TAB, record(ClientId, ChanPid));
-        false -> ok
-    end.
+-spec register_channel(binary() | {binary(), pid()}, atom()) -> ok.
+register_channel(ClientId, GwId) when is_binary(ClientId) ->
+    register_channel({ClientId, self()}, GwId);
+
+register_channel({ClientId, ChanPid}, GwId) when is_binary(ClientId), is_pid(ChanPid) ->
+    mnesia:dirty_write(tabname(GwId), record(ClientId, ChanPid)).
 
 %% @doc Unregister a global channel.
--spec(unregister_channel(emqx_types:clientid()
-                      | {emqx_types:clientid(), pid()}) -> ok).
-unregister_channel(ClientId) when is_binary(ClientId) ->
-    unregister_channel({ClientId, self()});
+-spec unregister_channel(binary() | {binary(), pid()}, atom()) -> ok.
+unregister_channel(ClientId, GwId) when is_binary(ClientId) ->
+    unregister_channel({ClientId, self()}, GwId);
 
-unregister_channel({ClientId, ChanPid}) when is_binary(ClientId), is_pid(ChanPid) ->
-    case is_enabled() of
-        true -> mnesia:dirty_delete_object(?TAB, record(ClientId, ChanPid));
-        false -> ok
-    end.
+unregister_channel({ClientId, ChanPid}, GwId) when is_binary(ClientId), is_pid(ChanPid) ->
+    mnesia:dirty_delete_object(tabname(GwId), record(ClientId, ChanPid));
 
 %% @doc Lookup the global channels.
--spec(lookup_channels(emqx_types:clientid()) -> list(pid())).
-lookup_channels(ClientId) ->
+-spec lookup_channels(binary(), atom()) -> list(pid()).
+lookup_channels(ClientId, GwId) ->
     [ChanPid || #channel{pid = ChanPid} <- mnesia:dirty_read(?TAB, ClientId)].
 
 record(ClientId, ChanPid) ->
@@ -100,17 +89,18 @@ record(ClientId, ChanPid) ->
 %% gen_server callbacks
 %%--------------------------------------------------------------------
 
-init([]) ->
-    ok = ekka_mnesia:create_table(?TAB, [
+init([GwId]) ->
+    Tab = tabname(GwId),
+    ok = ekka_mnesia:create_table(Tab, [
                 {type, bag},
                 {ram_copies, [node()]},
                 {record_name, channel},
                 {attributes, record_info(fields, channel)},
                 {storage_properties, [{ets, [{read_concurrency, true},
                                              {write_concurrency, true}]}]}]),
-    ok = ekka_mnesia:copy_table(?TAB, ram_copies),
+    ok = ekka_mnesia:copy_table(Tab, ram_copies),
     ok = ekka:monitor(membership),
-    {ok, #{}}.
+    {ok, #{gwid => GwId}}.
 
 handle_call(Req, _From, State) ->
     ?LOG(error, "Unexpected call: ~p", [Req]),
@@ -120,10 +110,11 @@ handle_cast(Msg, State) ->
     ?LOG(error, "Unexpected cast: ~p", [Msg]),
     {noreply, State}.
 
-handle_info({membership, {mnesia, down, Node}}, State) ->
+handle_info({membership, {mnesia, down, Node}}, State = #{gwid := GwId}) ->
+    Tab = tabname(GwId),
     global:trans({?LOCK, self()},
                  fun() ->
-                     mnesia:transaction(fun cleanup_channels/1, [Node])
+                     mnesia:transaction(fun cleanup_channels/1, [Node, Tab])
                  end),
     {noreply, State};
 
@@ -144,9 +135,8 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal functions
 %%--------------------------------------------------------------------
 
-cleanup_channels(Node) ->
+cleanup_channels(Node, Tab) ->
     Pat = [{#channel{pid = '$1', _ = '_'}, [{'==', {node, '$1'}, Node}], ['$_']}],
-    lists:foreach(fun delete_channel/1, mnesia:select(?TAB, Pat, write)).
-
-delete_channel(Chan) ->
-    mnesia:delete_object(?TAB, Chan, write).
+    lists:foreach(fun(Chan) ->
+        mnesia:delete_object(?TAB, Chan, write)
+    end, mnesia:select(Tab, Pat, write)).

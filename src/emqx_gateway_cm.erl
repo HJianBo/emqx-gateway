@@ -37,10 +37,8 @@
         ]).
 
 -record(state, {
-          chantab :: atom(), %% Client Tabname; Record: {ClientId, Pid}
-          conntab :: atom(), %% Client ConnMod; Recrod: {{ClientId, Pid}, ConnMod}
-          infotab :: atom(), %% ClientInfo Tabname; Record: {{ClientId, Pid}, ClientInfo, ClientStats}
-          registry :: pid(), %% ClientId Registry server
+          gwid    :: atom(),    %% Gateway Id
+          registry :: pid(),    %% ClientId Registry server
           chan_pmon :: emqx_pmon:pmon()
          }).
 
@@ -50,7 +48,14 @@
 
 %% XXX: Options for cm process
 start_link(Options) ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, Options, []).
+    gen_server:start_link(?MODULE, Options, []).
+
+-spec cmtabs(GwId) ->
+cmtabs(GwId) ->
+    { tabname(chan, GwId)   %% Client Tabname; Record: {ClientId, Pid}
+    , tabname(conn, GwId)   %% Client ConnMod; Recrod: {{ClientId, Pid}, ConnMod}
+    , tabname(info, GwId)   %% ClientInfo Tabname; Record: {{ClientId, Pid}, ClientInfo, ClientStats}
+    }.
 
 %%--------------------------------------------------------------------
 %% gen_server callbacks
@@ -61,20 +66,23 @@ init(Options) ->
 
     TabOpts = [public, {write_concurrency, true}],
 
-    ChanTab = tabname(chan, GwId),
-    ConnTab = tabname(conn, GwId),
-    InfoTab = tabname(info, GwId),
+    {ChanTab, ConnTab, InfoTab} = cmtabs(GwId),
     ok = emqx_tables:new(ChanTab, [bag, {read_concurrency, true}|TabOpts]),
     ok = emqx_tables:new(ConnTab, [bag | TabOpts]),
     ok = emqx_tables:new(InfoTab, [set, compressed | TabOpts]),
 
     %% Start link cm-registry process
+    Registry = emqx_gateway_cm_registry:start_link(GwId),
 
     %% Interval update stats
     %% TODO: v0.2
     %ok = emqx_stats:update_interval(chan_stats, fun ?MODULE:stats_fun/0),
 
-    {ok, #state{chantab = ChanTab, infotab = InfoTab, chan_pmon = emqx_pmon:new()}}.
+    {ok, #state{chantab = ChanTab,
+                conntab = ConnTab,
+                infotab = InfoTab,
+                registry = Registry,
+                chan_pmon = emqx_pmon:new()}}.
 
 handle_call(_Request, _From, State) ->
     Reply = ok,
@@ -87,15 +95,17 @@ handle_cast({registered, {ClientId, ChanPid}}, State = #{chan_pmon := PMon}) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-handle_info({'DOWN', _MRef, process, Pid, _Reason}, State = #{chan_pmon := PMon}) ->
+handle_info({'DOWN', _MRef, process, Pid, _Reason},
+            State = #{gwid = GwId, registry = Registry, chan_pmon := PMon}) ->
     ChanPids = [Pid | emqx_misc:drain_down(10000)],  %% XXX: Fixed BATCH_SIZE
     {Items, PMon1} = emqx_pmon:erase_all(ChanPids, PMon),
+
+    CmTabs = cmtabs(GwId),
     ok = emqx_pool:async_submit(
            lists:foreach(
              fun({ChanPid, ClientId}) ->
-                 do_unregister_channel({ClientId, ChanPid}, Registry, {ChanTab, ConnTab, InfoTab})
+                 do_unregister_channel({ClientId, ChanPid}, Registry, CmTabs)
              end, Items)
-           fun lists:foreach/2, [fun clean_down/1, Items]
           ),
     {noreply, State#{chan_pmon := PMon1}};
 
@@ -112,17 +122,13 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal funcs
 %%--------------------------------------------------------------------
 
-tabname(chan, Type) ->
-    list_to_atom(lists:concat([emqx_gateway_, Type, '_channel']));
-tabname(conn, Type) ->
-    list_to_atom(lists:concat([emqx_gateway_, Type, '_channel_conn']));
-tabname(info, Type) ->
-    list_to_atom(lists:concat([emqx_gateway_, Type, '_channel_info'])).
+tabname(chan, GwId) ->
+    list_to_atom(lists:concat([emqx_gateway_, GwId, '_channel']));
+tabname(conn, GwId) ->
+    list_to_atom(lists:concat([emqx_gateway_, GwId, '_channel_conn']));
+tabname(info, GwId) ->
+    list_to_atom(lists:concat([emqx_gateway_, GwId, '_channel_info'])).
 
-clean_down({ChanPid, ClientId}) ->
-    do_unregister_channel({ClientId, ChanPid}).
-
-%% @private
 do_unregister_channel(Chan, Registry, {ChanTab, ConnTab, InfoTab}) ->
     ok = emqx_gateway_cm_registry:unregister_channel(Registry, Chan),
 
