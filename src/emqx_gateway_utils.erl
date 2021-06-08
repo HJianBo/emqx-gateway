@@ -27,16 +27,16 @@
         ]).
 
 -spec childspec(supervisor:worker(), Mod :: atom()) -> supervisor:child_spec().
-child_spec(Type, Mod) ->
-    child_spec(Type, Mod, []).
+childspec(Type, Mod) ->
+    childspec(Type, Mod, []).
 
 -spec childspec(supervisor:worker(), Mod :: atom(), Args :: list())
     -> supervisor:child_spec().
-child_spec(Type, Mod, Args) ->
+childspec(Type, Mod, Args) ->
     #{ id => Mod
      , start => {Mod, start_link, Args}
      , type => Type
-     }).
+     }.
 
 -spec supervisor_ret(supervisor:startchild_ret())
     -> {ok, pid()}

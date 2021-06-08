@@ -18,20 +18,15 @@
 
 -include("include/emqx_gateway.hrl").
 
--behavior(gen_server)
+-behavior(gen_server).
 
 %% APIs for Impl.
--export([ load/2
+-export([ load/3
         , unload/1
         ]).
 
-%% APIs for Mgmt.
--export([ types/0
-        , create/3
-        , start/2
-        , stop/2
-        , delete/2
-        , list/0
+-export([ list/0
+        , lookup/1
         ]).
 
 %% APIs
@@ -47,9 +42,7 @@
         ]).
 
 -record(state, {
-          types   = #{},      %% #{App => Dscrptr}
-          running = [],       %% [instance()]
-          stopped = [],       %% [instance()]
+          types = #{} :: #{ atom() => descriptor() }
          }).
 
 %%--------------------------------------------------------------------
@@ -70,10 +63,9 @@ start_link() ->
 -type gateway_options() :: list().
 
 -type descriptor() :: #{ cbmod  := atom()
-                       , rgopts := registry_options(),
-                       , gwopts := gateway_options(),
-                       , state => any()
-                       , atom() :: any()
+                       , rgopts := registry_options()
+                       , gwopts := gateway_options()
+                       , state  => any()
                        }.
 
 -spec load(RegMod:: atom(), registry_options(), list()) -> ok | {error, any()}.
@@ -82,46 +74,25 @@ load(RegMod, RgOpts, GwOpts) ->
     Dscrptr = #{ cbmod  => RegMod
                , rgopts => RgOpts
                , gwopts => GwOpts
-               }
+               },
     call({load, RegMod, Dscrptr}).
 
 -spec unload(RegMod :: atom()) -> ok | {error, any()}.
 
 unload(RegMod) ->
-    all({unload, RegMod}).
+    call({unload, RegMod}).
 
 %% @doc Return all registered protocol gateway implementation
--spec types() -> [atom()].
-types() ->
-    call(all_types).
+-spec list() -> [atom()].
+list() ->
+    call(all).
+
+-spec lookup(atom()) -> emqx_gateway_impl:state().
+lookup(RegMod) ->
+    call({lookup, RegMod}).
 
 call(Req) ->
     gen_server:call(?MODULE, Req, 5000).
-
-%% Instances
--spec list() -> [instance()].
-
--spec create(Id, Type, Name, Descr, RawConf) -> {ok, pid()} | {errpr, any()}.
-create(Id, Type, Name, Descr, RawConf) ->
-    create(#instance{id = Id,
-                  type = Type,
-                  name = Name,
-                  descr = Descr,
-                  rawconf = RawConf
-                 }).
-
--spec create(instance()) -> {ok, pid()} | {error, any()}.
-create(Insta) ->
-    call({create, Insta}).
-
--spec remove(Id, Type) -> ok | {error, any()}.
-remove(Id, Type) ->
-    call({remove, Id, Type}).
-
--spec start(Id, Type) -> {ok, pid()} | {error, any()}.
-
--spec stop(Id, Type) -> ok | {error, any()}.
-
 
 %%--------------------------------------------------------------------
 %% gen_server callbacks
@@ -131,10 +102,9 @@ remove(Id, Type) ->
 
 init([]) ->
     process_flag(trap_exit, true),
+    {ok, #state{types = #{}}}.
 
-    {ok, #state{}}.
-
-handle_call({load, RegMod, Dscrptr}, _From, State = #state{types = Types}}) ->
+handle_call({load, RegMod, Dscrptr}, _From, State = #state{types = Types}) ->
     case maps:get(RegMod, Types, notfound) of
         notfound ->
             try
@@ -148,106 +118,34 @@ handle_call({load, RegMod, Dscrptr}, _From, State = #state{types = Types}}) ->
                     {reply, {error, Reason}, State};
                 Class : Reason ->
                     {reply, {error, {Class, Reason}}, State}
-            end
+            end;
         _ ->
-            {reply, {error, already_existed}, State}.
+            {reply, {error, already_existed}, State}
     end;
 
-handle_call({unload, RegMod}, _From,
-            State = #state{types = Types,
-                           running = Running,
-                           stopped = Stopped}) ->
-    RemoveF = fun _rmf(Insta = #instance{type = RegMod}) ->
-                    stop_and_delete_instance(Insta),
-                    false;
-                  _rmf(_) ->
-                    true
-              end,
-    NTypes = maps:remove(RegMod, Types),
-    NRunning = lists:filter(RemoveF, Running),
-    NStopped = lists:filter(RemoveF, Stopped),
-    {reply, ok, State#state{types = NTypes,
-                            running = NRunning,
-                            stopped = NStopped}};
-
-handle_call({create, Insta}, _From,
-            State = #state{types = Types, running = Running}) ->
-    case maps:get(Insta#instance.type, Types, notfound) of
-        notfound ->
-            {reply, {error, not_found}, State};
-        _Dscrptr = #{cbmod := CbMod, state := GwState} ->
-            case get_insta_status(Insta#instance.id, State) of
-                notfound ->
-                    try
-                        %% TODO: TopState
-                        {ok, InstaPid, InstaSt} =
-                            CbMod:on_insta_create(
-                              Insta#instance.id,
-                              Insta,
-                              GwState
-                             ),
-                        NState = State#state{running = [Insta|Running]},
-                        %% Link it
-                        true = link(InstaPid),
-                        {reply, InstaPid, State}
-                    catch
-                        Class : Reason : Stk ->
-                            ?LOG(error, "Create a gateway instance id: ~s, "
-                                        "name: ~s falied {~p, ~p}; "
-                                        "stacktrace: ~p",
-                                        [Insta#instance.id,
-                                         Insta#instance.name, Stk])
-                            {reply, {error, Reason}, State}
-                    end;
-                _ ->
-                    {reply, {error, already_existed}, State}
-            end
-    end;
-    {reply, ok, State};
-
-handle_call({start, InstaId}, _From,
-            State = #state{types = Types,
-                           running = Running,
-                           stopped = Stopped}) ->
-    case get_insta_status(InstaId, State) of
-        notfound ->
-            {reply, {error, not_found}, State};
-        {running, _} ->
-            {reply, {error, already_started}, State};
-        {stopped, Insta} ->
-            Dscptor = maps:get(Insta#instance.type, Types),
-            %% TODO: Create
-            {ok, InstaPid, InstaSt} = cb_create(Insta, Dscptor),
-            NState = State#state{stopped = Stopped -- [Insta],
-                                 running = [Insta#instance{enable = true} | Running]
-                                }
-            {reply, {ok, InstaPid}, NState}
-    end;
-
-handle_call({stop, InstaId}, _From, State) ->
-    case get_insta_status(InstaId, State) of
-        {running, Insta} ->
-            _ = cb_destory(Insta, State),
-            %% Move to stopped
-            {reply, ok, State#state{}};
+handle_call({unload, RegMod}, _From, State = #state{types = Types}) ->
+    case maps:get(RegMod, Types, undefined) of
+        undefined -> ok;
         _ ->
-            {reply, ok, State}
-    end;
-
-handle_call({remove, InstaId, Type}, _From, State) ->
-    %% Delete it
+            GwId = RegMod,
+            emqx_gateway_sup:stop_all_suptree(GwId)
+    end,
     {reply, ok, State};
 
-handle_call(which_children, _From, State) ->
-    %% TODO:
-    {reply, ok, State};
+handle_call(all, _From, State = #state{types = Types}) ->
+    Reply = maps:values(Types),
+    {reply, Reply, State};
+
+handle_call({lookup, RegMod}, _From, State = #state{types = Types}) ->
+    Reply = maps:get(RegMod, Types, undefined),
+    {reply, Reply, State};
+
+handle_call(Req, _From, State) ->
+    logger:error("Unexpected call: ~0p", [Req]),
+    {reply, ok, State}.
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
-
-handle_info({'EXIT', From, Reason}, State) ->
-    %% TODO:
-    {noreply, State};
 
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -257,19 +155,3 @@ terminate(_Reason, _State) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
-
-%%--------------------------------------------------------------------
-%% Internal funcs
-%%--------------------------------------------------------------------
-
-stop_and_delete_instance(Insta) ->
-    %% TODO:
-    ok.
-
-get_insta_status(Id, #state{running = Running, stopped = Stopped}) ->
-    case {lists:keyfind(Id, #instance.id, Running),
-          lists:keyfind(Id, #instance.id, Stopped)} of
-        {false, false} -> notfound;
-        {false, Insta} -> {stopped, Insta};
-        {Insta, false} -> {running, Insta};
-    end.

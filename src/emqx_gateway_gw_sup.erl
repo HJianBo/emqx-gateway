@@ -23,7 +23,7 @@
 
 -export([start_link/1]).
 
--export([ create_insta/2
+-export([ create_insta/3
         , remove_insta/2
         , update_insta/2
         , start_insta/2
@@ -41,8 +41,8 @@
 start_link([GwId]) ->
     supervisor:start_link({local, GwId}, ?MODULE, [GwId]).
 
--spec create_insta(pid(), instance()) -> {ok, GwInstaPid :: pid()} | {error, any()}.
-create_insta(Sup, Insta#instance{id => InstaId}) ->
+-spec create_insta(pid(), instance(), map()) -> {ok, GwInstaPid :: pid()} | {error, any()}.
+create_insta(Sup, Insta = #instance{id = InstaId}, GwState) ->
     case emqx_gateway_utils:find_sup_child(Sup, InstaId) of
         {ok, _GwInstaPid} -> {error, alredy_existed};
         false ->
@@ -53,7 +53,7 @@ create_insta(Sup, Insta#instance{id => InstaId}) ->
             ChildSpec = emqx_gateway_utils:childspec(
                           worker,
                           emqx_gateway_insta_sup,
-                          [Insta, Ctx]
+                          [Insta, Ctx, GwState]
                          ),
             emqx_gateway_utils:supervisor_ret(
               supervisor:start_child(Sup, ChildSpec)
@@ -99,7 +99,7 @@ list_insta(Sup) ->
       fun({InstaId, GwInstaPid, _Type, _Mods}) ->
         is_gateway_insta_id(InstaId)
           andalso emqx_gateway_insta_sup:instance(GwInstaPid)
-      end, supervisor:which_children(?MODULE)).
+      end, supervisor:which_children(Sup)).
 
 %% Supervisor callback
 
@@ -131,5 +131,5 @@ ctx(Sup, InstaId) ->
 
 is_gateway_insta_id(emqx_gateway_cm) ->
     false;
-is_gateway_insta_id(Id) ->
+is_gateway_insta_id(_Id) ->
     true.

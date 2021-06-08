@@ -17,14 +17,18 @@
 -ifndef(EMQX_GATEWAY_HRL).
 -define(EMQX_GATEWAY_HRL, 1).
 
+
+-type instance_id()   :: atom().
+-type gateway_type()  :: atom().
+
 %% @doc The Gateway Instace defination
--record(instance, { id    :: atom()
-                  , type  :: atom()
+-record(instance, { id    :: instance_id()
+                  , type  :: gateway_type()
                   , order :: non_neg_integer()  %% ??
                   , name :: binary()
                   , descr :: binary() | undefined
-                  , rawconf :: maps() = #{}
-                  , enable = true           %% FIXME: Read from configuration ?
+                  , rawconf = #{} :: map()
+                  , enable = true :: boolean()  %% FIXME: Read from configuration ?
                   }).
 
 -type instance() :: #instance{}.

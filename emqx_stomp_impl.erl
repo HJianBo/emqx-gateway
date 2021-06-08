@@ -67,14 +67,14 @@ init([param1, param2]) ->
 %% emqx_gateway_registry callbacks
 %%--------------------------------------------------------------------
 
-on_insta_create(Id, Instace, GwState) ->
+on_insta_create(Insta, GwState) ->
     {ok, GwInstPid} = emqx_stomp_sup:create(Name, Options),
     {ok, GwInstPid, GwInstaState}.
 
-on_insta_update(Id, NewInsta, OldInstace, GwInstaState, GwState) ->
+on_insta_update(NewInsta, OldInstace, GwInstaState, GwState) ->
     %% XXX:
     ok.
 
-on_insta_destroy(Id, Insta, GwInstaState, GwState) ->
+on_insta_destroy(Insta, GwInstaState, GwState) ->
     %% XXX:
     emqx_stomp_sup:delete(Id).

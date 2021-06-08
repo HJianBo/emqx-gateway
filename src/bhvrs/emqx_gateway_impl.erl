@@ -18,14 +18,14 @@
 
 -include("include/emqx_gateway.hrl").
 
--type state() :: maps().
+-type state() :: map().
 -type reason() :: any().
 
 %% @doc
 -callback init(Options :: list()) -> {error, reason()} | {ok, GwState :: state()}.
 
 %% @doc
--callback on_insta_create(Insta :: instance(), GwState)
+-callback on_insta_create(Insta :: instance(), GwState :: state())
     -> {ok, GwInstaPid :: pid(), GwInstaState :: state()}
      | {ok, Childspec :: supervisor:child_spec(), GwInstaState :: state()}.
 

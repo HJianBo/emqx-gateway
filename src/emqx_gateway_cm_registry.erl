@@ -19,7 +19,7 @@
 
 -behaviour(gen_server).
 
--logger_header("[Registry]").
+-logger_header("[PGW-CM-Registy]").
 
 -export([start_link/1]).
 
@@ -27,7 +27,7 @@
 %-export([is_enabled/0]).
 
 -export([ register_channel/2
-        , unregister_channel/1
+        , unregister_channel/2
         ]).
 
 -export([lookup_channels/2]).
@@ -46,7 +46,7 @@
 -record(channel, {chid, pid}).
 
 %% @doc Start the global channel registry.
--spec(start_link(atom()) -> startlink_ret()).
+-spec(start_link(atom()) -> gen_server:startlink_ret()).
 start_link(GwId) ->
     gen_server:start_link(?MODULE, [GwId], []).
 
@@ -72,7 +72,7 @@ unregister_channel(GwId, ClientId) when is_binary(ClientId) ->
     unregister_channel(GwId, {ClientId, self()});
 
 unregister_channel(GwId, {ClientId, ChanPid}) when is_binary(ClientId), is_pid(ChanPid) ->
-    mnesia:dirty_delete_object(tabname(GwId), record(ClientId, ChanPid));
+    mnesia:dirty_delete_object(tabname(GwId), record(ClientId, ChanPid)).
 
 %% @doc Lookup the global channels.
 -spec lookup_channels(atom(), binary()) -> list(pid()).
@@ -100,18 +100,18 @@ init([GwId]) ->
     {ok, #{gwid => GwId}}.
 
 handle_call(Req, _From, State) ->
-    logger:error("[PGW-CM-Registy] Unexpected call: ~p", [Req]),
+    logger:error("Unexpected call: ~p", [Req]),
     {reply, ignored, State}.
 
 handle_cast(Msg, State) ->
-    logger:error("[PGW-CM-Registy] Unexpected cast: ~p", [Msg]),
+    logger:error("Unexpected cast: ~p", [Msg]),
     {noreply, State}.
 
 handle_info({membership, {mnesia, down, Node}}, State = #{gwid := GwId}) ->
     Tab = tabname(GwId),
     global:trans({?LOCK, self()},
                  fun() ->
-                     mnesia:transaction(fun cleanup_channels/1, [Node, Tab])
+                     mnesia:transaction(fun cleanup_channels/2, [Node, Tab])
                  end),
     {noreply, State};
 
@@ -119,7 +119,7 @@ handle_info({membership, _Event}, State) ->
     {noreply, State};
 
 handle_info(Info, State) ->
-    logger:error("[PGW-CM-Registy] Unexpected info: ~p", [Msg]),
+    logger:error("Unexpected info: ~p", [Info]),
     {noreply, State}.
 
 terminate(_Reason, _State) ->

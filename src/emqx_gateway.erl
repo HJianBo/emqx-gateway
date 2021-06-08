@@ -16,15 +16,15 @@
 
 -module(emqx_gateway).
 
--export([ start_gateways/1
-        ]).
+-include("include/emqx_gateway.hrl").
 
 %% APIs
 -export([ types/0
-        , create/3
+        , create/5
+        , remove/2
+        , update/2
         , start/2
         , stop/2
-        , delete/2
         , list/0
         ]).
 
@@ -46,17 +46,14 @@ list() ->
     -> {ok, pid()}
      | {error, any()}.
 create(InstaId, Type, Name, Descr, RawConf) ->
-    case emqx_gateway_registry:lookup(Type) of
-        undefined -> {error, {unknown_type, Type}};
-        GwState ->
-            Insta = #instance{id = InstaId,
-                              type = Type,
-                              name = Name,
-                              descr = Descr,
-                              rawconf = RawConf
-                             },
-            emqx_gateway_sup:create_gateway_insta(Insta)
-    end.
+    Insta = #instance{
+               id = InstaId,
+               type = Type,
+               name = Name,
+               descr = Descr,
+               rawconf = RawConf
+              },
+    emqx_gateway_sup:create_gateway_insta(Insta).
 
 -spec remove(atom(), atom()) -> ok | {error, any()}.
 remove(InstaId, Type) ->

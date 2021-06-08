@@ -19,12 +19,16 @@
 
 -behaviour(gen_server).
 
+-logger_header("[PGW-CM]").
+
 %% APIs
 -export([start_link/1]).
 
--export([ open_session/4
+-export([ open_session/5
+        , register_channel/4
+        , unregister_channel/2
         , set_chann_info/3
-        , set_chan_stats/3
+        , set_chann_stats/3
         ]).
 
 %% gen_server callbacks
@@ -57,9 +61,9 @@ start_link(Options) ->
 procname(GwId) ->
     list_to_atom(lists:concat([emqx_gateway_, GwId, '_cm'])).
 
--spec cmtabs(GwId) -> {ChanTab :: atom(),
-                       ConnTab :: atom(),
-                       ChannInfoTab :: atom()}.
+-spec cmtabs(GwId :: atom()) -> {ChanTab :: atom(),
+                                 ConnTab :: atom(),
+                                 ChannInfoTab :: atom()}.
 cmtabs(GwId) ->
     { tabname(chan, GwId)   %% Client Tabname; Record: {ClientId, Pid}
     , tabname(conn, GwId)   %% Client ConnMod; Recrod: {{ClientId, Pid}, ConnMod}
@@ -76,7 +80,7 @@ tabname(info, GwId) ->
 lockername(GwId) ->
     list_to_atom(lists:concat([emqx_gateway_, GwId, '_locker'])).
 
--spec register_channel(atom(), binary(), pid(), emqx_types:conninfo()) ->
+-spec register_channel(atom(), binary(), pid(), emqx_types:conninfo()) -> ok.
 register_channel(GwId, ClientId, ChanPid, #{conn_mod := ConnMod}) when is_pid(ChanPid) ->
     Chan = {ClientId, ChanPid},
     true = ets:insert(tabname(chan, GwId), Chan),
@@ -87,10 +91,21 @@ register_channel(GwId, ClientId, ChanPid, #{conn_mod := ConnMod}) when is_pid(Ch
 %% @doc Unregister a channel.
 -spec unregister_channel(atom(), emqx_types:clientid()) -> ok.
 unregister_channel(GwId, ClientId) when is_binary(ClientId) ->
-    true = do_unregister_channel(GwId, {ClientId, self()}),
+    true = do_unregister_channel(GwId, {ClientId, self()}, cmtabs(GwId)),
     ok.
 
--spec open_session(GwId:: atom(), CleanStart, ClientInfo, ConnInfo, CreateSessionFun)
+-spec set_chann_info(atom(), binary(), emqx_types:clientinfo()) -> ok.
+set_chann_info(_GwId, _ClientId, _ClientInfo) ->
+    todo.
+
+-spec set_chann_stats(atom(), binary(), emqx_types:clientinfo()) -> ok.
+set_chann_stats(_GwId, _ClientId, _ClientInfo) ->
+    todo.
+
+-spec open_session(GwId :: atom(), CleanStart :: boolean(),
+                   ClientInfo :: emqx_types:clientinfo(),
+                   ConnInfo :: emqx_types:conninfo(),
+                   CreateSessionFun :: function())
     -> {ok, #{session := map(),
               present := boolean(),
               pendings => list()
@@ -99,20 +114,25 @@ unregister_channel(GwId, ClientId) when is_binary(ClientId) ->
 
 open_session(GwId, true = CleanStart, ClientInfo, ConnInfo, CreateSessionFun) ->
     Self = self(),
+    ClientId = maps:get(clientid, ClientInfo),
     CleanStart = fun(_) ->
                      ok = discard_session(GwId, ClientId),
-                     Session = create_session(GwId, ClientInfo, ConnInfo),
+                     Session = create_session(GwId,
+                                              ClientInfo,
+                                              ConnInfo,
+                                              CreateSessionFun
+                                             ),
                      register_channel(GwId, ClientId, Self, ConnInfo),
                      {ok, #{session => Session, present => false}}
                  end,
     locker_trans(GwId, ClientId, CleanStart);
 
-open_session(GwId, false = CleanStart, ClientInfo, ConnInfo, CreateSessionFun) ->
-    Self = self(),
+open_session(_GwId, false = _CleanStart,
+             _ClientInfo, _ConnInfo, _CreateSessionFun) ->
     {error, not_supported_now}.
 
 %% @private
-create_session(GwId, ClientInfo, ConnInfo, CreateSessionFun) ->
+create_session(_GwId, ClientInfo, ConnInfo, CreateSessionFun) ->
     try
         Session = emqx_gateway_util:apply(
                     CreateSessionFun,
@@ -124,7 +144,7 @@ create_session(GwId, ClientInfo, ConnInfo, CreateSessionFun) ->
         Session
     catch
         Class : Reason : Stk ->
-            logger:error("[PGW-CM] Failed to create a session: ~p, ~p "
+            logger:error("Failed to create a session: ~p, ~p "
                          "Stacktrace:~0p", [Class, Reason, Stk]),
         throw(Reason)
     end.
@@ -143,17 +163,18 @@ do_discard_session(GwId, ClientId, Pid) ->
         discard_session(GwId, ClientId, Pid)
     catch
         _ : noproc -> % emqx_ws_connection: call
-            ?tp(debug, "session_already_gone", #{pid => Pid}),
+            %?tp(debug, "session_already_gone", #{pid => Pid}),
             ok;
         _ : {noproc, _} -> % emqx_connection: gen_server:call
-            ?tp(debug, "session_already_gone", #{pid => Pid}),
+            %?tp(debug, "session_already_gone", #{pid => Pid}),
             ok;
         _ : {{shutdown, _}, _} ->
-            ?tp(debug, "session_already_shutdown", #{pid => Pid}),
+            %?tp(debug, "session_already_shutdown", #{pid => Pid}),
             ok;
-        _ : Error : St ->
-            ?tp(error, "failed_to_discard_session",
-                #{pid => Pid, reason => Error, stacktrace=>St})
+        _ : _Error : _St ->
+            %?tp(error, "failed_to_discard_session",
+            %    #{pid => Pid, reason => Error, stacktrace=>St})
+            ok
     end.
 
 %% @private
@@ -169,14 +190,9 @@ discard_session(GwId, ClientId, ChanPid) ->
     rpc_call(node(ChanPid), discard_session, [GwId, ClientId, ChanPid]).
 
 %% @doc Lookup channels.
--spec(lookup_channels(atom(), emqx_types:clientid()) -> list(chan_pid())).
+-spec(lookup_channels(atom(), emqx_types:clientid()) -> list(pid())).
 lookup_channels(GwId, ClientId) ->
-    lookup_channels(GwId, ClientId).
-
-%% @doc Lookup local or global channels.
--spec(lookup_channels(atom(), emqx_types:clientid()) -> list(chan_pid())).
-lookup_channels(GwId, ClientId) ->
-    emqx_cm_registry:lookup_channels(GwId, ClientId);
+    emqx_cm_registry:lookup_channels(GwId, ClientId).
 
 get_chann_conn_mod(GwId, ClientId, ChanPid) when node(ChanPid) == node() ->
     Chan = {ClientId, ChanPid},
@@ -195,15 +211,15 @@ locker_trans(GwId, ClientId, Fun) ->
     Locker = lockername(GwId),
     case locker_lock(Locker, ClientId) of
         {true, Nodes} ->
-            try Fun(Nodes) after unlock(Locker, ClientId) end;
+            try Fun(Nodes) after locker_unlock(Locker, ClientId) end;
         {false, _Nodes} ->
             {error, client_id_unavailable}
     end.
 
-lock(Locker, ClientId) ->
+locker_lock(Locker, ClientId) ->
     ekka_locker:acquire(Locker, ClientId, quorum).
 
-unlock(Locker, ClientId) ->
+locker_unlock(Locker, ClientId) ->
     ekka_locker:release(Locker, ClientId, quorum).
 
 %% @private
@@ -257,7 +273,7 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info({'DOWN', _MRef, process, Pid, _Reason},
-            State = #{gwid = GwId, registry = Registry, chan_pmon := PMon}) ->
+            State = #state{gwid = GwId, chan_pmon = PMon}) ->
     ChanPids = [Pid | emqx_misc:drain_down(10000)],  %% XXX: Fixed BATCH_SIZE
     {Items, PMon1} = emqx_pmon:erase_all(ChanPids, PMon),
 
