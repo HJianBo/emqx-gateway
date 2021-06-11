@@ -18,6 +18,8 @@
 
 -include("include/emqx_gateway.hrl").
 
+-logger_header("[PGW-Registry]").
+
 -behavior(gen_server).
 
 %% APIs for Impl.
@@ -68,19 +70,20 @@ start_link() ->
                        , state  => any()
                        }.
 
--spec load(RegMod:: atom(), registry_options(), list()) -> ok | {error, any()}.
+-spec load(GwId :: atom(), registry_options(), list()) -> ok | {error, any()}.
 
-load(RegMod, RgOpts, GwOpts) ->
-    Dscrptr = #{ cbmod  => RegMod
+load(GwId, RgOpts, GwOpts) ->
+    CbMod = proplists:get_value(cbkmod, RgOpts, GwId),
+    Dscrptr = #{ cbmod  => CbMod
                , rgopts => RgOpts
                , gwopts => GwOpts
                },
-    call({load, RegMod, Dscrptr}).
+    call({load, GwId, Dscrptr}).
 
--spec unload(RegMod :: atom()) -> ok | {error, any()}.
+-spec unload(GwId :: atom()) -> ok | {error, any()}.
 
-unload(RegMod) ->
-    call({unload, RegMod}).
+unload(GwId) ->
+    call({unload, GwId}).
 
 %% @doc Return all registered protocol gateway implementation
 -spec list() -> [atom()].
@@ -88,8 +91,8 @@ list() ->
     call(all).
 
 -spec lookup(atom()) -> emqx_gateway_impl:state().
-lookup(RegMod) ->
-    call({lookup, RegMod}).
+lookup(GwId) ->
+    call({lookup, GwId}).
 
 call(Req) ->
     gen_server:call(?MODULE, Req, 5000).
@@ -104,30 +107,30 @@ init([]) ->
     process_flag(trap_exit, true),
     {ok, #state{types = #{}}}.
 
-handle_call({load, RegMod, Dscrptr}, _From, State = #state{types = Types}) ->
-    case maps:get(RegMod, Types, notfound) of
+handle_call({load, GwId, Dscrptr}, _From, State = #state{types = Types}) ->
+    case maps:get(GwId, Types, notfound) of
         notfound ->
             try
                 GwOpts = maps:get(gwopts, Dscrptr),
-                {ok, GwState} = RegMod:init(GwOpts),
+                CbMod  = maps:get(cbmod,  Dscrptr),
+                {ok, GwState} = CbMod:init(GwOpts),
                 NDscrptr = maps:put(state, GwState, Dscrptr),
-                NTypes = maps:put(RegMod, NDscrptr, Types),
+                NTypes = maps:put(GwId, NDscrptr, Types),
                 {reply, ok, State#state{types = NTypes}}
             catch
-                error : {badmatch, {error, Reason}} ->
-                    {reply, {error, Reason}, State};
-                Class : Reason ->
+                Class : Reason : Stk ->
+                    logger:error("Load ~s crashed {~p, ~p}; stacktrace: ~0p",
+                                  [GwId, Class, Reason, Stk]),
                     {reply, {error, {Class, Reason}}, State}
             end;
         _ ->
             {reply, {error, already_existed}, State}
     end;
 
-handle_call({unload, RegMod}, _From, State = #state{types = Types}) ->
-    case maps:get(RegMod, Types, undefined) of
+handle_call({unload, GwId}, _From, State = #state{types = Types}) ->
+    case maps:get(GwId, Types, undefined) of
         undefined -> ok;
         _ ->
-            GwId = RegMod,
             emqx_gateway_sup:stop_all_suptree(GwId)
     end,
     {reply, ok, State};
@@ -136,8 +139,8 @@ handle_call(all, _From, State = #state{types = Types}) ->
     Reply = maps:values(Types),
     {reply, Reply, State};
 
-handle_call({lookup, RegMod}, _From, State = #state{types = Types}) ->
-    Reply = maps:get(RegMod, Types, undefined),
+handle_call({lookup, GwId}, _From, State = #state{types = Types}) ->
+    Reply = maps:get(GwId, Types, undefined),
     {reply, Reply, State};
 
 handle_call(Req, _From, State) ->

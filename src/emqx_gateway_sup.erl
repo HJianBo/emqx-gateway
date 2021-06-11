@@ -124,7 +124,7 @@ init([]) ->
                 , intensity => 10
                 , period => 60
                 },
-    ChildSpecs = [ emqx_gateway_utils:childspec(woker, emqx_gateway_registry)
+    ChildSpecs = [ emqx_gateway_utils:childspec(worker, emqx_gateway_registry)
                  ],
     {ok, {SupFlags, ChildSpecs}}.
 

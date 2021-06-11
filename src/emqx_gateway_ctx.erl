@@ -30,7 +30,7 @@
          %%, metrics := metrics()
          %% authenticators?
          %% clientinfo_override
-         %% 
+         %%
          %% hooks   ?
          %% pubsub  ? acl ?
          }.

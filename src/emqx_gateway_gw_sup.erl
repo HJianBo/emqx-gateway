@@ -38,7 +38,7 @@
 %% APIs
 %%--------------------------------------------------------------------
 
-start_link([GwId]) ->
+start_link(GwId) ->
     supervisor:start_link({local, GwId}, ?MODULE, [GwId]).
 
 -spec create_insta(pid(), instance(), map()) -> {ok, GwInstaPid :: pid()} | {error, any()}.
@@ -112,7 +112,7 @@ init([GwId]) ->
                 , period => 60
                 },
     CmOpts = [{gwid, GwId}],
-    CM = emqx_gateway_utils:childspec(woker, emqx_gateway_cm, [CmOpts]),
+    CM = emqx_gateway_utils:childspec(worker, emqx_gateway_cm, [CmOpts]),
 
     %emqx_gateway_utils:childspec(worker, emqx_gateway_registy) %% FIXME:
     {ok, {SupFlags, [CM]}}.

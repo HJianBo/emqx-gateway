@@ -25,9 +25,15 @@
         , unload/0
         ]).
 
+-export([ init/1
+        , on_insta_create/2
+        , on_insta_update/4
+        , on_insta_destroy/3
+        ]).
+
 %% APIs
 load() ->
-    %% FIXME: Is the following concept belong to gateway??? 
+    %% FIXME: Is the following concept belong to gateway???
     %%       >> No
     %%
     %% emqx_stomp_schema module is
@@ -50,14 +56,15 @@ load() ->
     %%  Schema        => APIs's Descriptor
     %%  Schema        => APIs's Validator
     %%
-    SchemaF = fun emqx_stomp_schema:consult/1,
-    RegistryOptions = [{schema, emqx_stomp_schema}],
+    RegistryOptions = [ {cbkmod, ?MODULE}
+                      , {schema, emqx_stomp_schema}
+                      ],
 
     YourOptions = [param1, param2],
-    emqx_gateway_registry:load(?MODULE, RegistryOptions, YourOptions).
+    emqx_gateway_registry:load(stomp, RegistryOptions, YourOptions).
 
 unload() ->
-    emqx_gateway_registry:unload(?MODULE).
+    emqx_gateway_registry:unload(stomp).
 
 init([param1, param2]) ->
     GwState = #{},
@@ -68,13 +75,13 @@ init([param1, param2]) ->
 %%--------------------------------------------------------------------
 
 on_insta_create(Insta, GwState) ->
-    {ok, GwInstPid} = emqx_stomp_sup:create(Name, Options),
-    {ok, GwInstPid, GwInstaState}.
+    GwInstPid = spawn(fun() -> timer:sleep(3000) end),
+    {ok, GwInstPid, #{}}.
 
 on_insta_update(NewInsta, OldInstace, GwInstaState, GwState) ->
     %% XXX:
     ok.
 
-on_insta_destroy(Insta, GwInstaState, GwState) ->
+on_insta_destroy(Insta = #instance{id = Id}, GwInstaState, GwState) ->
     %% XXX:
     emqx_stomp_sup:delete(Id).
